@@ -4,7 +4,7 @@ import time
 import base64, binascii
 import io
 from PIL import Image, UnidentifiedImageError
-### need to import the AWS SDK for Python here
+import boto3 ### need to import the AWS SDK for Python here
 
 def lambda_handler(event, context):
     # event is a JSON string as described in https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html
@@ -20,10 +20,15 @@ def lambda_handler(event, context):
         header, data = meme_data["image"].split(";base64,")
         extension = header.split("image/")[-1]
     except ValueError:
-        pass ### respond with a status code 400 error and the string "badly-formed image data"
-
+        return {
+            "statusCode": 400,
+            "body": json.dumps("badly-formed ...")
+        }
     if extension not in ("bmp", "gif", "jpeg", "png", "tiff"):
-        pass ### respond with a status code 400 error and the string "badly-formed image data"
+        return {
+            "statusCode": 400,
+            "body": json.dumps("badly-formed image data")
+        }
 
     # use Pillow (https://pillow.readthedocs.io/en/stable/index.html)
     # to load the image (base 64 conversion code courtesy of
@@ -33,23 +38,26 @@ def lambda_handler(event, context):
     try:
         image = Image.open(io.BytesIO(base64.decodebytes(bytes(data, "utf-8"))))
     except (UnidentifiedImageError, binascii.Error):
-        pass ### respond with a status code 400 and the string "badly-formed image data"
+        return {
+            "statusCode": 400,
+            "body": json.dumps("badly-formed image data")
+        }
 
     # use a random UUID as the id for the meme (both the full image
     # and thumbnail)
     id = uuid.uuid4().hex
 
     # get the S3 bucket
-    s3 = ### get the service resource
-    bucket = ### get the sub-resource
+    s3 = boto3.resource("s3")
+    bucket = s3.Bucket("<bucket name>")
 
     # save it in an in-memory file-like object
     # if you're unfamiliar with the "with" statement, read this: https://www.geeksforgeeks.org/with-statement-in-python/
     with io.BytesIO() as in_mem_file:
         image.save(in_mem_file, format=image.format)
         in_mem_file.seek(0)
-        bucket. ### apply an action to upload the in-memory file to the /memes folder
-    
+        bucket.upload_fileobj(
+            in_mem_file, f"/memes/{id}")    
     # make a thumbnail and repeat the process above
     image.thumbnail((200, 200))
     
@@ -62,8 +70,9 @@ def lambda_handler(event, context):
     with io.BytesIO() as in_mem_file:
         image.save(in_mem_file, format="jpeg")
         in_mem_file.seek(0)
-        bucket. ### upload the in-memory file to the /thumbnails folder using the same id as the meme
-
+        bucket.upload_fileobj(
+            in_mem_file, f"/thumbnails/{id}")
+        
     # write the entry to the database
     posted = int(time.time()) # current epoch time in seconds
     timeToDie = posted + 24 * 60 * 60
@@ -74,9 +83,13 @@ def lambda_handler(event, context):
         "timeToDie": timeToDie
     }
     
-    dynamodb = ### get the service resource
-    table = ### get the sub-resource
-    table. ### apply the method to add an item to the table
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table("im-memes")
+    table.put_item(Item=db_entry)
 
-    ### respond with success code 200 and id of the meme
-
+    return {
+        "statusCode": 200,
+        "body": json.dumps(
+            { "id": id }
+        )
+    }
